@@ -3,8 +3,10 @@ from typing import Iterable, Literal
 import pandas as pd
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
-from db import SessionLocal, ENGINE
-from models import Base, Future, Expiration, Trade
+
+from futures_app.db import SessionLocal, ENGINE
+from futures_app.models import Base, Future, Expiration, Trade
+
 
 def init_db():
     Base.metadata.create_all(ENGINE)

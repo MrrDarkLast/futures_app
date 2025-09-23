@@ -1,21 +1,29 @@
-from __future__ import annotations   # ← Должно быть самым первым
+from __future__ import annotations
+
+# --- bootstrap to allow absolute package imports when run as a script ---
+import os, sys
+if __package__ is None or __package__ == "":
+    sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from datetime import date
 from typing import Optional
 import os
+
 from PySide6 import QtWidgets, QtCore
-from PySide6.QtGui import QAction     # ← QAction из QtGui
+from PySide6.QtGui import QAction
 from sqlalchemy import select, delete
 
-from db import SessionLocal
-from models import Trade, Expiration
-from services import (
+from futures_app.db import SessionLocal
+from futures_app.models import Trade, Expiration
+from futures_app.services import (
     init_db,
     import_expirations_xls,
     import_trades_xls,
     delete_trades_by_date,
     ValidationError,
 )
+from PySide6 import QtGui
+
 
 
 # ---------------- Table Models ----------------
@@ -183,6 +191,127 @@ class CombinedTableModel(QtCore.QAbstractTableModel):
             if c == 4: return r[4].isoformat()
 
 
+# ---------------- Custom Widgets ----------------
+class FuturesCodeLineEdit(QtWidgets.QLineEdit):
+    def __init__(self, parent=None, initial_code=""):
+        super().__init__(parent)
+        self.setPlaceholderText("Введите числа (например: 20 10)")
+        self.textChanged.connect(self.format_code)
+        self.cursorPositionChanged.connect(self.on_cursor_changed)
+        self._last_cursor_pos = 0
+        self._is_formatting = False
+        
+        # Устанавливаем начальное значение
+        if initial_code:
+            self.setText(initial_code)
+        else:
+            self.setText("FUSD__")
+    
+    def format_code(self, text):
+        if self._is_formatting:
+            return
+            
+        self._is_formatting = True
+        cursor_pos = self.cursorPosition()
+        
+        # Извлекаем только цифры из введенного текста
+        digits_only = ''.join(filter(str.isdigit, text))
+        
+        # Формируем код с учетом количества цифр
+        if len(digits_only) >= 4:
+            month = digits_only[:2]
+            year = digits_only[2:4]
+            formatted = f"FUSD_{month}_{year}"
+        elif len(digits_only) >= 2:
+            month = digits_only[:2]
+            year = digits_only[2:] if len(digits_only) > 2 else ""
+            if year:
+                formatted = f"FUSD_{month}_{year}"
+            else:
+                formatted = f"FUSD_{month}_"
+        elif len(digits_only) == 1:
+            formatted = f"FUSD_{digits_only}_"
+        else:
+            formatted = "FUSD__"
+        
+        # Обновляем текст только если он изменился
+        if self.text() != formatted:
+            self.blockSignals(True)
+            self.setText(formatted)
+            self.blockSignals(False)
+        
+        # Устанавливаем курсор в правильную позицию
+        if cursor_pos <= 5:  # Если курсор в префиксе FUSD_
+            self.setCursorPosition(5)  # После FUSD_
+        elif cursor_pos <= len(formatted):
+            self.setCursorPosition(cursor_pos)
+        else:
+            self.setCursorPosition(len(formatted))
+            
+        self._is_formatting = False
+    
+    def on_cursor_changed(self, old_pos, new_pos):
+        # Не позволяем курсору быть в префиксе FUSD_
+        if new_pos < 5:
+            self.setCursorPosition(5)
+    
+    def keyPressEvent(self, event):
+        # Обрабатываем специальные клавиши
+        if event.key() in (QtCore.Qt.Key_Backspace, QtCore.Qt.Key_Delete):
+            cursor_pos = self.cursorPosition()
+            text = self.text()
+            
+            if event.key() == QtCore.Qt.Key_Backspace and cursor_pos > 5:
+                # Удаляем символ перед курсором, если он не в префиксе
+                new_text = text[:cursor_pos-1] + text[cursor_pos:]
+                self.blockSignals(True)
+                self.setText(new_text)
+                self.blockSignals(False)
+                
+                # Простое позиционирование курсора - на одну позицию назад
+                new_cursor_pos = max(5, cursor_pos - 1)
+                self.setCursorPosition(new_cursor_pos)
+                self.format_code(new_text)
+                return
+            elif event.key() == QtCore.Qt.Key_Delete and cursor_pos < len(text) and cursor_pos >= 5:
+                # Удаляем символ после курсора, если он не в префиксе
+                new_text = text[:cursor_pos] + text[cursor_pos+1:]
+                self.blockSignals(True)
+                self.setText(new_text)
+                self.blockSignals(False)
+                
+                # Курсор остается на той же позиции
+                self.setCursorPosition(cursor_pos)
+                self.format_code(new_text)
+                return
+        
+        # Обрабатываем ввод цифр
+        if event.text().isdigit():
+            cursor_pos = self.cursorPosition()
+            text = self.text()
+            
+            # Вставляем цифру в нужное место
+            if cursor_pos < 5:
+                cursor_pos = 5
+            
+            # Если курсор находится на позиции символа _, перемещаем его после _
+            if cursor_pos < len(text) and text[cursor_pos] == '_':
+                cursor_pos += 1
+            
+            new_text = text[:cursor_pos] + event.text() + text[cursor_pos:]
+            self.blockSignals(True)
+            self.setText(new_text)
+            self.blockSignals(False)
+            self.setCursorPosition(cursor_pos + 1)
+            self.format_code(new_text)
+            return
+        
+        # Игнорируем все остальные символы
+        event.ignore()
+    
+    def get_clean_code(self):
+        return self.text().strip()
+
 # ---------------- Dialogs ----------------
 class ImportDialog(QtWidgets.QDialog):
     def __init__(self, parent, title, handler, modes):
@@ -220,7 +349,7 @@ class TradeEditDialog(QtWidgets.QDialog):
         super().__init__(parent); self.setWindowTitle(title)
         self.dateEdit = QtWidgets.QDateEdit(QtCore.QDate.currentDate() if day is None else QtCore.QDate(day))
         self.dateEdit.setCalendarPopup(True)
-        self.code = QtWidgets.QLineEdit(code)
+        self.code = FuturesCodeLineEdit(self, code)
         self.price = QtWidgets.QLineEdit(f"{price}")
         self.contracts = QtWidgets.QLineEdit("" if contracts is None else f"{contracts}")
         form = QtWidgets.QFormLayout()
@@ -245,7 +374,7 @@ class TradeEditDialog(QtWidgets.QDialog):
 class ExpirationEditDialog(QtWidgets.QDialog):
     def __init__(self, parent, *, code: str="", expiry: Optional[date]=None, title="Дата исполнения"):
         super().__init__(parent); self.setWindowTitle(title)
-        self.code = QtWidgets.QLineEdit(code)
+        self.code = FuturesCodeLineEdit(self, code)
         self.dateEdit = QtWidgets.QDateEdit(QtCore.QDate.currentDate() if expiry is None else QtCore.QDate(expiry))
         self.dateEdit.setCalendarPopup(True)
         form = QtWidgets.QFormLayout(); form.addRow("Код", self.code); form.addRow("Дата исполнения", self.dateEdit)
@@ -280,6 +409,7 @@ class TradesPage(QtWidgets.QWidget):
 
         self.view = QtWidgets.QTableView()
         self.view.setModel(self.model)
+        self.view.setAlternatingRowColors(True)
         self.view.setSortingEnabled(False)  # чтобы «конец» реально был внизу
         self.view.setSelectionBehavior(QtWidgets.QTableView.SelectRows)
         self.view.setSelectionMode(QtWidgets.QTableView.SingleSelection)
@@ -321,7 +451,6 @@ class TradesPage(QtWidgets.QWidget):
                         trade_date=day,
                         future_code=code,
                         price_rub_per_usd=price,
-                        volume_mln_rub=None,
                         contracts_count=cnt,
                     ))
                 else:
@@ -403,6 +532,7 @@ class ExpirationsPage(QtWidgets.QWidget):
         super().__init__()
         self.model = ExpirationsTableModel()
         self.view = QtWidgets.QTableView(); self.view.setModel(self.model)
+        self.view.setAlternatingRowColors(True)
         self.view.setSortingEnabled(False)  # чтобы новая строка была именно внизу
         self.view.setSelectionBehavior(QtWidgets.QTableView.SelectRows)
         self.view.setSelectionMode(QtWidgets.QTableView.SingleSelection)
@@ -436,7 +566,7 @@ class ExpirationsPage(QtWidgets.QWidget):
             if not code:
                 raise ValidationError(["Код не может быть пустым"])
 
-            from models import Future
+            from futures_app.models import Future
             # одна транзакция без вложенных begin()
             with SessionLocal.begin() as s:
                 # гарантируем наличие futures
@@ -514,6 +644,7 @@ class CombinedPage(QtWidgets.QWidget):
         super().__init__()
         self.model = CombinedTableModel()
         self.view = QtWidgets.QTableView(); self.view.setModel(self.model)
+        self.view.setAlternatingRowColors(True)
         self.view.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.view.horizontalHeader().setStretchLastSection(True)
 
@@ -550,17 +681,9 @@ class MainWindow(QtWidgets.QMainWindow):
         main_tabs.addTab(table_tabs, "Таблица")
 
         # Заглушки для других разделов
-        main_tabs.addTab(QtWidgets.QLabel("Раздел Анализ (готовим)"), "Анализ")
-        main_tabs.addTab(QtWidgets.QLabel("Раздел Отчёт (готовим)"), "Отчёт")
-
-        help_text = QtWidgets.QTextBrowser()
-        help_text.setHtml(
-            "<h2>Помощь</h2>"
-            "<p>1) Импортируйте DATAISP (код, дата исполнения).<br>"
-            "2) Импортируйте F_USD (торги).<br>"
-            "3) Редактируйте, удаляйте, обновляйте из соответствующих вкладок.</p>"
-        )
-        main_tabs.addTab(help_text, "Помощь")
+        main_tabs.addTab(QtWidgets.QLabel("Раздел Анализ"), "Анализ")
+        main_tabs.addTab(QtWidgets.QLabel("Раздел Отчёт"), "Отчёт")
+        main_tabs.addTab(QtWidgets.QLabel("Раздел Помощь"), "Помощь")
 
         self.setCentralWidget(main_tabs)
 
@@ -569,11 +692,94 @@ class MainWindow(QtWidgets.QMainWindow):
         for page in (self.trades_page, self.exp_page, self.comb_page):
             page.model.refresh()
 
+def apply_light_theme(app: QtWidgets.QApplication) -> None:
+    # Управляемый стиль
+    app.setStyle("Fusion")
+
+    # Светлая палитра
+    pal = QtGui.QPalette()
+    pal.setColor(QtGui.QPalette.Window, QtCore.Qt.white)
+    pal.setColor(QtGui.QPalette.WindowText, QtCore.Qt.black)
+    pal.setColor(QtGui.QPalette.Base, QtCore.Qt.white)
+    pal.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#fafafa"))
+    pal.setColor(QtGui.QPalette.Text, QtCore.Qt.black)
+    pal.setColor(QtGui.QPalette.Button, QtCore.Qt.white)
+    pal.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.black)
+    pal.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.white)
+    pal.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.black)
+    pal.setColor(QtGui.QPalette.Highlight, QtGui.QColor("#d0e7ff"))
+    pal.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.black)
+    app.setPalette(pal)
+
+    # Нежный стиль для таблиц/заголовков/выделений
+    app.setStyleSheet("""
+        QMainWindow, QWidget { background: #ffffff; color: #000000; }
+        QToolBar { background: #ffffff; border: none; }
+        QTableView { 
+            gridline-color: #dddddd;
+            selection-background-color: #d0e7ff; 
+            selection-color: #000000;
+        }
+        QHeaderView::section {
+            background: #f5f5f5;
+            color: #000000;
+            font-weight: 600;
+            padding: 6px 8px;
+            border: 1px solid #e5e5e5;
+        }
+        QLineEdit, QComboBox, QDateEdit, QTextEdit {
+            background: #ffffff;
+            border: 1px solid #dcdcdc;
+            padding: 4px 6px;
+        }
+        QPushButton {
+            background-color: #f5f5f5 !important;
+            border: 2px solid #999999;
+            border-radius: 4px;
+            padding: 6px 10px;
+            color: #000000;
+            font-weight: 500;
+        }
+        QPushButton:hover { 
+            border-color: #666666; 
+            background-color: #e8e8e8 !important;
+            border-width: 2px;
+        }
+        QPushButton:pressed { 
+            background-color: #e0e0e0 !important;
+            border-color: #333333;
+        }
+        QToolBar {
+            background: #ffffff;
+            border: none;
+            spacing: 3px;
+        }
+        QToolBar QToolButton {
+            background-color: #f5f5f5 !important;
+            border: 2px solid #999999 !important;
+            border-radius: 6px !important;
+            padding: 8px 12px !important;
+            margin: 2px !important;
+            font-weight: 600 !important;
+            color: #000000 !important;
+        }
+        QToolBar QToolButton:hover {
+            background-color: #e8e8e8 !important;
+            border-color: #666666 !important;
+            border-width: 2px !important;
+        }
+        QToolBar QToolButton:pressed {
+            background-color: #e0e0e0 !important;
+            border-color: #333333 !important;
+        }
+    """)
+
 
 
 def main():
     init_db()
     app = QtWidgets.QApplication([])
+    apply_light_theme(app)
     w = MainWindow()
     w.show()
     app.exec()
