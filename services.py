@@ -4,8 +4,8 @@ import pandas as pd
 from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
 
-from futures_app.db import SessionLocal, ENGINE
-from futures_app.models import Base, Future, Expiration, Trade
+from db import SessionLocal, ENGINE
+from models import Base, Future, Expiration, Trade
 
 
 def init_db():
@@ -108,12 +108,10 @@ def import_trades_xls(path: str, mode: Literal["insert","upsert","replace"]="ups
                     trade_date=r.trade_date,
                     future_code=r.future_code,
                     price_rub_per_usd=r.price,
-                    volume_mln_rub=None if r.volume is None else r.volume,
                     contracts_count=None if r.contracts is None else int(r.contracts)
                 ))
             elif mode in ("upsert","replace"):
                 t.price_rub_per_usd = r.price
-                t.volume_mln_rub = None if r.volume is None else r.volume
                 t.contracts_count = None if r.contracts is None else int(r.contracts)
 
 def delete_trades_by_date(day: date, futures: Iterable[str] | None = None) -> int:
