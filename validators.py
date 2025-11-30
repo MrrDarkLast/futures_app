@@ -73,7 +73,7 @@ class FuturesValidator:
         expiration = result.scalars().first()
         
         if expiration is None:
-            errors.append(f"Код {code} не существует в базе данных. Нельзя добавлять новые коды.")
+            errors.append(f"Код {code} не существует в базе данных.")
             return False, errors
             
         return True, []
@@ -127,7 +127,9 @@ class FuturesValidator:
             return False, [f"Код {code} не соответствует формату FUSD_MM_YY"]
             
         code_month = int(match.group(1))
-        code_year = 1900 + int(match.group(2))  # Предполагаем, что год в формате YY относится к 20 веку (19XX)
+        year_2digit = int(match.group(2))
+        # Правило окна: 00-49 = 20XX, 50-99 = 19XX
+        code_year = 2000 + year_2digit if year_2digit < 50 else 1900 + year_2digit
         
         # Проверяем соответствие месяца и года в коде с датой исполнения
         if code_month != expiry_date.month:
@@ -201,7 +203,11 @@ class FuturesValidator:
         """
         errors = []
         
-        if contracts is not None and contracts < 0:
+        if contracts is None:
+            errors.append("Количество контрактов не может быть пустым")
+            return False, errors
+            
+        if contracts < 0:
             errors.append(f"Количество контрактов ({contracts}) не может быть отрицательным")
             
         return len(errors) == 0, errors

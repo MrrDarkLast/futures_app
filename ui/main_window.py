@@ -25,9 +25,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exp_page = ExpirationsPage()
         self.comb_page = CombinedPage()
 
-        table_tabs.addTab(self.trades_page, "Первая таблица (торги)")
-        table_tabs.addTab(self.exp_page, "Вторая таблица (исполнения)")
-        table_tabs.addTab(self.comb_page, "Третья таблица (совмещённая)")
+        table_tabs.addTab(self.trades_page, "Торги")
+        table_tabs.addTab(self.exp_page, "Исполнения")
+        table_tabs.addTab(self.comb_page, "Совмещённая")
 
         self.main_tabs.addTab(table_tabs, "Таблица")
 
@@ -51,6 +51,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # Подключаем сигналы для переноса выделенной строки в анализ
         self.trades_page.row_selected.connect(self.transfer_trade_to_analytics)
         self.exp_page.row_selected.connect(self.transfer_expiration_to_analytics)
+        self.comb_page.row_selected.connect(self.transfer_combined_to_analytics)
+        
+        # Подключаем сигнал для переноса отфильтрованных данных в анализ
+        self.comb_page.transfer_filtered_to_analytics.connect(self.transfer_filtered_to_analytics)
 
         # Эти refresh не обязательны, т.к. модели делают refresh() в своих __init__
         for page in (self.trades_page, self.exp_page, self.comb_page):
@@ -58,7 +62,7 @@ class MainWindow(QtWidgets.QMainWindow):
             
     def transfer_trade_to_analytics(self, row_index):
         """Передает данные из выделенной строки таблицы торгов в раздел анализа"""
-        if row_index < 0:
+        if row_index is None or row_index < 0:
             return
             
         # Получаем данные из модели
@@ -71,7 +75,7 @@ class MainWindow(QtWidgets.QMainWindow):
             
     def transfer_expiration_to_analytics(self, row_index):
         """Передает данные из выделенной строки таблицы исполнений в раздел анализа"""
-        if row_index < 0:
+        if row_index is None or row_index < 0:
             return
             
         # Получаем данные из модели
@@ -82,3 +86,24 @@ class MainWindow(QtWidgets.QMainWindow):
             # Устанавливаем код фьючерса в форме анализа без переключения на вкладку и запуска анализа
             # Для даты используем текущую дату, так как дата исполнения может быть в будущем
             self.analytics_page.set_analysis_params(future_code, QtCore.QDate.currentDate().toPython())
+            
+    def transfer_combined_to_analytics(self, row_index):
+        """Передает данные из выделенной строки совмещённой таблицы в раздел анализа"""
+        if row_index is None or row_index < 0:
+            return
+            
+        # Получаем данные напрямую из отфильтрованных строк
+        # Структура: [Дата торгов, Код, Цена, Контрактов, Дата исполнения]
+        if row_index < len(self.comb_page.model.filtered_rows):
+            row_data = self.comb_page.model.filtered_rows[row_index]
+            trade_date = row_data[0]  # Дата торгов
+            future_code = row_data[1]  # Код фьючерса
+            
+            if future_code and trade_date:
+                # Устанавливаем значения в форме анализа без переключения на вкладку и запуска анализа
+                self.analytics_page.set_analysis_params(future_code, trade_date)
+    
+    def transfer_filtered_to_analytics(self, future_code, date_from, date_to, contracts_from, contracts_to, price_from, price_to):
+        """Переносит отфильтрованные данные из совмещенной таблицы в анализ"""
+        self.analytics_page.set_analysis_params_range(future_code, date_from, date_to, contracts_from, contracts_to, price_from, price_to)
+        self.main_tabs.setCurrentIndex(1)

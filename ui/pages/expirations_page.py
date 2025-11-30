@@ -7,7 +7,7 @@ from models import Future, Expiration, Trade
 from services import ValidationError
 from ui.dialogs.dialogs import ExpirationEditDialog
 from ui.models.table_models import ExpirationsTableModel
-from ui.pages.sort_control import SortControlWidget
+from ui.widgets.custom_widgets import show_success_toast
 from validators import FuturesValidator
 
 
@@ -116,6 +116,8 @@ class ExpirationsPage(QtWidgets.QWidget):
                         # Устанавливаем фокус на новую строку
                         self.view.setCurrentIndex(new_row_index)
                         self.view.setFocus()
+                        
+                        show_success_toast(self, f"Дата исполнения для {code} успешно добавлена")
                     else:
                         # Если код уже есть — просто обновим дату и перерисуем выбранную строку
                         existing = s.get(Expiration, code)
@@ -130,6 +132,8 @@ class ExpirationsPage(QtWidgets.QWidget):
                         else:
                             # На всякий случай, если строка не выделена
                             self.model.refresh()
+                        
+                        show_success_toast(self, f"Дата исполнения для {code} успешно обновлена")
                     
                     # Уведомляем об изменении данных
                     self.data_changed.emit()
@@ -204,6 +208,8 @@ class ExpirationsPage(QtWidgets.QWidget):
                         self.view.setFocus()
                         break
                 
+                show_success_toast(self, f"Дата исполнения для {code} успешно изменена")
+                
                 # Уведомляем об изменении данных
                 self.data_changed.emit()
                 
@@ -226,15 +232,19 @@ class ExpirationsPage(QtWidgets.QWidget):
         msg = QtWidgets.QMessageBox(self)
         msg.setWindowTitle("Подтверждение удаления")
         msg.setText(f"Удалить запись {code} ({expiry.strftime('%d-%m-%Y')})?")
-        msg.setIcon(QtWidgets.QMessageBox.Question)
+        msg.setInformativeText("⚠️ ВНИМАНИЕ: Запись будет удалена отовсюду!\n\n"
+                              "• Удаляется дата исполнения фьючерса\n"
+                              "• Удаляются ВСЕ связанные записи торгов по этому коду\n"
+                              "• Запись исчезнет из всех таблиц (торги, исполнения, совмещённая)")
+        msg.setIcon(QtWidgets.QMessageBox.Warning)
         
         # Меняем порядок кнопок и делаем "Нет" кнопкой по умолчанию
-        no_btn = msg.addButton("Нет", QtWidgets.QMessageBox.NoRole)
-        yes_btn = msg.addButton("Да", QtWidgets.QMessageBox.YesRole)
+        no_btn = msg.addButton("Да", QtWidgets.QMessageBox.NoRole)
+        yes_btn = msg.addButton("Нет", QtWidgets.QMessageBox.YesRole)
         msg.setDefaultButton(no_btn)
         
         msg.exec()
-        if msg.clickedButton() != yes_btn:
+        if msg.clickedButton() != no_btn:
             return
             
         try:
@@ -247,6 +257,8 @@ class ExpirationsPage(QtWidgets.QWidget):
                 
             # Обновляем модель
             self.model.refresh()
+            
+            show_success_toast(self, f"Запись {code} успешно удалена")
             
             # Уведомляем об изменении данных
             self.data_changed.emit()

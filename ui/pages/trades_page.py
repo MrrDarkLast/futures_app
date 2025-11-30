@@ -9,7 +9,7 @@ from models import Trade, Expiration
 from services import delete_trades_by_date, ValidationError
 from ui.dialogs.dialogs import TradeEditDialog
 from ui.models.table_models import TradesTableModel
-from ui.pages.sort_control import SortControlWidget
+from ui.widgets.custom_widgets import CustomDateEdit, show_success_toast
 from validators import FuturesValidator
 
 
@@ -148,6 +148,8 @@ class TradesPage(QtWidgets.QWidget):
                 self.view.setCurrentIndex(new_row_index)
                 self.view.setFocus()
                 
+                show_success_toast(self, f"Торг {code} от {day.strftime('%d-%m-%Y')} успешно добавлен")
+                
                 # Уведомляем об изменении данных
                 self.data_changed.emit()
                 
@@ -225,6 +227,8 @@ class TradesPage(QtWidgets.QWidget):
                 br = self.model.index(row, self.model.columnCount() - 1)
                 self.model.dataChanged.emit(tl, br)
                 
+                show_success_toast(self, f"Торг {code} от {day.strftime('%d-%m-%Y')} успешно изменён")
+                
                 # Уведомляем об изменении данных
                 self.data_changed.emit()
                 
@@ -240,8 +244,7 @@ class TradesPage(QtWidgets.QWidget):
         """Удаление записей по дате"""
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Удаление за дату")
-        d = QtWidgets.QDateEdit(QtCore.QDate.currentDate())
-        d.setCalendarPopup(True)
+        d = CustomDateEdit(QtCore.QDate.currentDate(), dlg)
         codes = QtWidgets.QLineEdit()
         form = QtWidgets.QFormLayout()
         form.addRow("Дата", d)
@@ -271,10 +274,44 @@ class TradesPage(QtWidgets.QWidget):
             
         day = d.date().toPython()
         lst = [c for c in codes.text().split() if c.strip()] or None
+        
+        # Показываем предупреждение перед удалением
+        warning_msg = QtWidgets.QMessageBox(self)
+        warning_msg.setWindowTitle("Подтверждение удаления")
+        
+        if lst:
+            codes_text = ", ".join(lst)
+            warning_msg.setText(f"Удалить записи торгов за {day.strftime('%d-%m-%Y')} по кодам: {codes_text}?")
+        else:
+            warning_msg.setText(f"Удалить ВСЕ записи торгов за {day.strftime('%d-%m-%Y')}?")
+            
+        warning_msg.setInformativeText("⚠️ ВНИМАНИЕ: Записи будут удалены отовсюду!\n\n"
+                                      "• Удаляются записи торгов из таблицы 'Торги'\n"
+                                      "• Записи исчезнут из совмещённой таблицы\n"
+                                      "• Дата исполнения (если есть) останется без изменений")
+        warning_msg.setIcon(QtWidgets.QMessageBox.Warning)
+        
+        # Меняем порядок кнопок и делаем "Нет" кнопкой по умолчанию
+        no_btn = warning_msg.addButton("Да", QtWidgets.QMessageBox.NoRole)
+        yes_btn = warning_msg.addButton("Нет", QtWidgets.QMessageBox.YesRole)
+        warning_msg.setDefaultButton(no_btn)
+        
+        warning_msg.exec()
+        if warning_msg.clickedButton() != no_btn:
+            return
+            
         try:
             n = delete_trades_by_date(day, lst)
-            QtWidgets.QMessageBox.information(self, "Готово", f"Удалено строк: {n}")
+            
+            sort_column = self.view.horizontalHeader().sortIndicatorSection()
+            sort_order = self.view.horizontalHeader().sortIndicatorOrder()
+            
             self.model.refresh()
+            
+            self.model.sort(sort_column, sort_order)
+            self.view.horizontalHeader().setSortIndicator(sort_column, sort_order)
+            
+            show_success_toast(self, f"Удалено записей: {n}")
             
             # Уведомляем об изменении данных
             self.data_changed.emit()
